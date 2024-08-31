@@ -6,21 +6,17 @@
 
 ![Discord](https://img.shields.io/discord/1257684604941504623?logo=discord&logoColor=blue&label=Join%20Discord)
 
-This tool is an open-source CLI companion to [Smart Media Cutter](https://smartmediacutter).
+This tool is an open-source CLI companion to [Smart Media Cutter](https://smartmediacutter.com).
 
 `smartcut` can cut video files in many different formats and codecs with only minimal recoding around the cutpoints (a.k.a. "smart cut").
 
 This means that you can cut even long video files in seconds!
 
-In contrast, [Smart Media Cutter](https://smartmediacutter) is fully-featured linear video editor with a lot more features like:
-* Easy to use GUI
-* Transcript based editing (edit videos like text documents)
-* Automatic silence cutting
-* Export timeline to editors like Resolve, Premiere
+In contrast, [Smart Media Cutter](https://smartmediacutter.com) is fully-featured linear video editor with a lot more features like: Easy to use GUI, Transcript based editing (edit videos like text documents), Automatic silence cutting, Export timeline to editors like Resolve & Premiere and a generous free tier.
 
-## Features
+## Open Sourced Features
 
-- **Efficient Cutting**: Only recodes around the cutpoints, preserving the majority of the original video quality.
+- **Efficient Cutting**: `smartcut` only recodes around the cutpoints, preserving the majority of the original video quality.
 - **Flexible Input**: Supports a wide range of video/audio formats and codecs.
 - **Flexible cutting**: Allows for both "keep" and "cut" operations based on specified input times.
 - **Audio Export**: Includes all audio tracks by default with nearly lossless passthrough.
