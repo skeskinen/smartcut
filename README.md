@@ -1,2 +1,126 @@
-# smartcut
-Cut video files with minimal recoding
+<p align="center">
+  <img src="images/logo_small.png" alt="Logo" width="250">
+</p>
+
+<h1 align="center">Video Smartcut</h1>
+
+![Discord](https://img.shields.io/discord/1257684604941504623?logo=discord&logoColor=blue&label=Join%20Discord)
+
+This tool is an open-source CLI companion to [Smart Media Cutter](https://smartmediacutter).
+
+`smartcut` can cut video files in many different formats and codecs with only minimal recoding around the cutpoints (a.k.a. "smart cut").
+
+This means that you can cut even long video files in seconds!
+
+In contrast, [Smart Media Cutter](https://smartmediacutter) is fully-featured linear video editor with a lot more features like:
+* Easy to use GUI
+* Transcript based editing (edit videos like text documents)
+* Automatic silence cutting
+* Export timeline to editors like Resolve, Premiere
+
+## Features
+
+- **Efficient Cutting**: Only recodes around the cutpoints, preserving the majority of the original video quality.
+- **Flexible Input**: Supports a wide range of video/audio formats and codecs.
+- **Flexible cutting**: Allows for both "keep" and "cut" operations based on specified input times.
+- **Audio Export**: Includes all audio tracks by default with nearly lossless passthrough.
+
+## Installation
+
+Get built binaries for Windows and Linux from [releases](https://github.com/skeskinen/smartcut/releases).
+
+To install from source:
+```
+# Clone this repository:
+git clone https://github.com/skeskinen/smartcut.git
+cd smartcut
+# Create python virtual environment:
+python -m venv .venv
+source .venv/bin/activate
+# Install the required dependencies:
+pip install -r requirements.txt
+# Run:
+python ./smartcut input.mp4 output.mp4 --keep 10,20,40,50
+```
+
+## Usage
+
+The CLI requires the input and output file paths as positional arguments. You can specify the segments to keep or cut using the `--keep` or `--cut` options.
+
+### Basic Commands
+
+- **Keep specific segments**:
+
+  `smartcut.exe input.mp4 output.mp4 --keep 10,20,40,50`
+
+  This keeps the segments from 10s to 20s and from 40s to 50s.
+
+- **Cut specific segments**:
+
+  `smartcut.exe input.mp4 output.mp4 --cut 30,40,60,70`
+
+  This cuts out the segments from 30s to 40s and from 60s to 70s, keeping the rest.
+
+- **Specify log level**:
+
+  `smartcut.exe input.mp4 output.mp4 --keep 10,20 --log-level info`
+
+### Audio Export
+
+By default, all audio tracks are included with passthrough codec settings. This can be adjusted by modifying the `AudioExportInfo` in the script if needed.
+
+## Contributing
+
+Contributions are welcome! All the code will be licensed under MIT license.
+
+Any changes have to work with the closed-source GUI app as well, so please coordinate with me if you want to make significant changes. You can find me on [discord](https://discord.gg/uYGkyfzU4c) most of the time.
+
+## Testing
+
+We have ok test coverage for various video and audio formats. Video tests check that pixel values are ~unchanged. In audio testing it's harder to check if the output is the same as input, but we try our best by checking the correlation of input&output as well as absolute diff.
+
+Some of the tests depend on components in the GUI app that are not open-source. These tests are disabled.
+
+Normal test run looks like this:
+```
+python tests/smartcut_tests.py
+Skipping smc tests
+test_h264_cut_on_keyframes: PASS
+test_h264_smart_cut: PASS
+test_h264_24_fps_long: PASS
+test_h264_1080p: PASS
+test_h264_multiple_cuts: PASS
+test_h264_profile_baseline: PASS
+test_h264_profile_main: PASS
+test_h264_profile_high: PASS
+test_h264_profile_high10: PASS
+test_h264_profile_high422: PASS
+test_h264_profile_high444: PASS
+test_mp4_cut_on_keyframe: PASS
+test_mp4_smart_cut: PASS
+test_mp4_to_mkv_smart_cut: PASS
+test_mkv_to_mp4_smart_cut: PASS
+test_vp9_smart_cut: PASS
+test_av1_smart_cut: PASS
+test_vp9_profile_1: PASS
+test_night_sky: PASS
+test_night_sky_to_mkv: PASS
+test_sunset: PASS
+test_h265_cut_on_keyframes: PASS
+test_h265_smart_cut: PASS
+test_h265_smart_cut_large: PASS
+test_mp4_h265_smart_cut: PASS
+test_vertical_transform: PASS
+x265 [warning]: Source height < 720p; disabling lookahead-slices
+x265 [warning]: Source height < 720p; disabling lookahead-slices
+test_video_recode_codec_override: PASS
+test_vorbis_passthru: PASS
+test_mkv_with_video_and_audio_passthru: PASS
+test_mp3_passthru: PASS
+Tests ran in 147.1s
+```
+
+## Acknowledgements
+
+* This project is part of [Smart Media Cutter](https://smartmediacutter)
+* We use [PyAV](https://github.com/PyAV-Org/PyAV) to interface with [ffmpeg](https://www.ffmpeg.org/) internals in a pythonic way

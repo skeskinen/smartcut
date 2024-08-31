@@ -15,7 +15,7 @@ from smartcut.media_container import MediaContainer
 from smartcut.misc_data import AudioExportInfo, AudioExportSettings, CutSegment, MixInfo, VideoTransform, VideoViewTransform, WatermarkView
 
 try:
-    from smc.mix_audio_cutter import MixAudioCutter, RecodeTrackAudioCutter
+    from smc.audio_handling import MixAudioCutter, RecodeTrackAudioCutter
 except ImportError:
     pass
 

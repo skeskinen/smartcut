@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 from fractions import Fraction
 from smartcut.media_container import MediaContainer
-from smartcut.smartcut import smart_cut, VideoSettings, VideoExportMode, VideoExportQuality, AudioExportSettings, AudioExportInfo
+from smartcut.cut_video import smart_cut, VideoSettings, VideoExportMode, VideoExportQuality, AudioExportSettings, AudioExportInfo
 from tqdm import tqdm
 
 def parse_time_segments(time_str):

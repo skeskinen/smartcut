@@ -15,7 +15,7 @@ import scipy
 
 from smartcut.misc_data import MixInfo, VideoTransform, VideoViewTransform
 from smartcut.media_container import MediaContainer, AudioTrack, AudioReader
-from smartcut.smartcut import AudioExportInfo, AudioExportSettings, VideoExportMode, VideoExportQuality, VideoSettings, make_cut_segments, smart_cut
+from smartcut.cut_video import AudioExportInfo, AudioExportSettings, VideoExportMode, VideoExportQuality, VideoSettings, make_cut_segments, smart_cut
 
 np.random.seed(12345)
 
