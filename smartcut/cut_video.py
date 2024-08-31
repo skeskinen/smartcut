@@ -465,83 +465,82 @@ def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fra
     if video_settings.mode == VideoExportMode.RECODE:
         for c in cut_segments:
             c.require_recode = True
-    #try:
-    for _ in range(1):
-        if segment_mode:
-            output_files = []
-            padding = len(str(len(positive_segments)))
-            for i, s in enumerate(positive_segments):
-                segment_index = str(i + 1).zfill(padding)  # Zero-pad the segment index
-                if "#" in out_path:
-                    pound_index = out_path.rfind("#")
-                    output_file = out_path[:pound_index] + segment_index + out_path[pound_index + 1:]
+
+    if segment_mode:
+        output_files = []
+        padding = len(str(len(positive_segments)))
+        for i, s in enumerate(positive_segments):
+            segment_index = str(i + 1).zfill(padding)  # Zero-pad the segment index
+            if "#" in out_path:
+                pound_index = out_path.rfind("#")
+                output_file = out_path[:pound_index] + segment_index + out_path[pound_index + 1:]
+            else:
+                # Insert the segment index right before the last '.'
+                dot_index = out_path.rfind(".")
+                if dot_index != -1:
+                    output_file = out_path[:dot_index] + segment_index + out_path[dot_index:]
                 else:
-                    # Insert the segment index right before the last '.'
-                    dot_index = out_path.rfind(".")
-                    if dot_index != -1:
-                        output_file = out_path[:dot_index] + segment_index + out_path[dot_index:]
-                    else:
-                        output_file = f"{out_path}{segment_index}"
+                    output_file = f"{out_path}{segment_index}"
 
-                output_files.append((output_file, s))
+            output_files.append((output_file, s))
 
-        else:
-            output_files = [(out_path, positive_segments[-1])]
-        previously_done_segments = 0
-        for output_path_segment in output_files:
-            if cancel_object is not None and cancel_object.cancelled:
-                break
-            with av.open(output_path_segment[0], 'w') as output_av_container:
+    else:
+        output_files = [(out_path, positive_segments[-1])]
+    previously_done_segments = 0
+    for output_path_segment in output_files:
+        if cancel_object is not None and cancel_object.cancelled:
+            break
+        with av.open(output_path_segment[0], 'w') as output_av_container:
 
-                include_video = True
-                if output_av_container.format.name in ['ogg', 'mp3', 'm4a', 'ipod', 'flac', 'wav']: #ipod is the real name for m4a, I guess
-                    include_video = False
-                generators = []
-                if media_container.video_stream is not None and include_video:
-                    generators.append(VideoCutter(media_container, output_av_container, video_settings, log_level))
+            include_video = True
+            if output_av_container.format.name in ['ogg', 'mp3', 'm4a', 'ipod', 'flac', 'wav']: #ipod is the real name for m4a, I guess
+                include_video = False
+            generators = []
+            if media_container.video_stream is not None and include_video:
+                generators.append(VideoCutter(media_container, output_av_container, video_settings, log_level))
 
-                if audio_export_info is not None:
-                    if audio_export_info.mix_export_settings is not None:
-                        generators.append(MixAudioCutter(media_container, output_av_container,
-                                                        audio_export_info.mix_info, audio_export_info.mix_export_settings))
-                    for track_i, track_export_settings in enumerate(audio_export_info.output_tracks):
-                        if track_export_settings is not None:
-                            if track_export_settings.codec == 'passthru':
-                                generators.append(PassthruAudioCutter(media_container, output_av_container, track_i, track_export_settings))
-                            else:
-                                generators.append(RecodeTrackAudioCutter(media_container, output_av_container, track_i, track_export_settings))
+            if audio_export_info is not None:
+                if audio_export_info.mix_export_settings is not None:
+                    generators.append(MixAudioCutter(media_container, output_av_container,
+                                                    audio_export_info.mix_info, audio_export_info.mix_export_settings))
+                for track_i, track_export_settings in enumerate(audio_export_info.output_tracks):
+                    if track_export_settings is not None:
+                        if track_export_settings.codec == 'passthru':
+                            generators.append(PassthruAudioCutter(media_container, output_av_container, track_i, track_export_settings))
+                        else:
+                            generators.append(RecodeTrackAudioCutter(media_container, output_av_container, track_i, track_export_settings))
 
-                output_av_container.start_encoding()
-                if progress is not None:
-                    progress.emit(len(cut_segments))
-                for s in cut_segments[previously_done_segments:]:
-                    if cancel_object is not None and cancel_object.cancelled:
-                        break
-                    if s.start_time >= output_path_segment[1][1]: # Go to the next output file
-                        break
+            output_av_container.start_encoding()
+            if progress is not None:
+                progress.emit(len(cut_segments))
+            for s in cut_segments[previously_done_segments:]:
+                if cancel_object is not None and cancel_object.cancelled:
+                    break
+                if s.start_time >= output_path_segment[1][1]: # Go to the next output file
+                    break
 
-                    if progress is not None:
-                        progress.emit(previously_done_segments)
-                    previously_done_segments += 1
-                    assert s.start_time < s.end_time
-                    for g in generators:
-                        for packet in g.segment(s):
-                            # if isinstance(g, VideoCutter):
-                            # print(packet)
-                            output_av_container.mux(packet)
-                for g in generators:
-                    for packet in g.finish():
-                        # if isinstance(g, VideoCutter):
-                        # print("finish packet: ", packet)
-                        output_av_container.mux(packet)
                 if progress is not None:
                     progress.emit(previously_done_segments)
+                previously_done_segments += 1
+                assert s.start_time < s.end_time
+                for g in generators:
+                    for packet in g.segment(s):
+                        # if isinstance(g, VideoCutter):
+                        # print(packet)
+                        output_av_container.mux(packet)
+            for g in generators:
+                for packet in g.finish():
+                    # if isinstance(g, VideoCutter):
+                    # print("finish packet: ", packet)
+                    output_av_container.mux(packet)
+            if progress is not None:
+                progress.emit(previously_done_segments)
 
-            if cancel_object is not None and cancel_object.cancelled:
-                last_file_path = output_path_segment[0]
+        if cancel_object is not None and cancel_object.cancelled:
+            last_file_path = output_path_segment[0]
 
-                if os.path.exists(last_file_path):
-                    os.remove(last_file_path)
+            if os.path.exists(last_file_path):
+                os.remove(last_file_path)
 
     # except Exception as e:
     #     return e

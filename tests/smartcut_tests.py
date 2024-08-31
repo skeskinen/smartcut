@@ -194,9 +194,8 @@ def test_cut_on_keyframes(input_path, output_path):
     for c in cut_segments:
         assert not c.require_recode, "Cutting on a keyframe should not require recoding"
 
-    exception_value = smart_cut(source, segments, output_path)
-    if exception_value is not None:
-        raise exception_value
+    smart_cut(source, segments, output_path)
+
     result_container = MediaContainer(output_path)
     check_videos_equal(source, result_container)
 
@@ -207,17 +206,12 @@ def test_smart_cut(input_path, output_path, n_cuts, audio_export_info = None, vi
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
-    exception_value = smart_cut(source, segments, output_path,
-                audio_export_info=audio_export_info, video_settings=video_settings, log_level='warning')
-    if exception_value is not None:
-        raise exception_value
+    smart_cut(source, segments, output_path,
+        audio_export_info=audio_export_info, video_settings=video_settings, log_level='warning')
+
     result_container = MediaContainer(output_path)
     check_videos_equal(source, result_container)
 
-def smart_cut_with_catch(*args, **kwargs):
-    exception_value = smart_cut(*args, **kwargs)
-    if exception_value is not None:
-        raise exception_value
 
 def test_h264_cut_on_keyframes():
     create_test_video(short_h264_path, 30, 'h264', 'yuv420p', 30, (32, 18))
@@ -364,14 +358,14 @@ def test_vertical_transform():
 
     video_transform = VideoTransform((1080, 1920), views=[])
     video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.NORMAL, video_transform)
-    smart_cut_with_catch(source_container, segments, output_path, video_settings=video_settings)
+    smart_cut(source_container, segments, output_path, video_settings=video_settings)
 
     output_container = MediaContainer(output_path)
     check_videos_equal(reference_container, output_container)
 
     video_transform = VideoTransform((1080, 1920), views=[VideoViewTransform('test', 0.5, 0.5, 0.5, 0.5, 0.5, True)])
     video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.NORMAL, video_transform)
-    smart_cut_with_catch(source_container, segments, output_path, video_settings=video_settings)
+    smart_cut(source_container, segments, output_path, video_settings=video_settings)
 
     output_container = MediaContainer(output_path)
     check_videos_equal(reference_container, output_container)
@@ -380,7 +374,7 @@ def test_vertical_transform():
 
     video_transform = VideoTransform((1080, 1920), views=[VideoViewTransform('test', 0.5, 0.5, 0.5, 0.5, 0.5, True)])
     video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.NORMAL, video_transform, codec_override='hevc')
-    smart_cut_with_catch(source_container, segments, output_path, video_settings=video_settings, log_level='warning')
+    smart_cut(source_container, segments, output_path, video_settings=video_settings, log_level='warning')
 
     output_container = MediaContainer(output_path)
     assert output_container.video_stream.codec_context.name == 'hevc', f'codec should be hevc, found {output_container.video_stream.codec_context.name}'
@@ -403,14 +397,14 @@ def test_video_recode_codec_override():
     output_path_b = test_video_recode_codec_override.__name__ + 'b.mkv'
 
     video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.NORMAL, None, codec_override='hevc')
-    smart_cut_with_catch(source_container, segments, output_path_a, video_settings=video_settings, log_level='warning')
+    smart_cut(source_container, segments, output_path_a, video_settings=video_settings, log_level='warning')
 
     output_container = MediaContainer(output_path_a)
     assert output_container.video_stream.codec_context.name == 'hevc', f'codec should be hevc, found {output_container.video_stream.codec_context.name}'
     check_videos_equal(source_container, output_container)
 
     video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.HIGH, None, codec_override='hevc')
-    smart_cut_with_catch(source_container, segments, output_path_b, video_settings=video_settings, log_level='warning')
+    smart_cut(source_container, segments, output_path_b, video_settings=video_settings, log_level='warning')
 
     output_container = MediaContainer(output_path_b)
     assert output_container.video_stream.codec_context.name == 'hevc', f'codec should be hevc, found {output_container.video_stream.codec_context.name}'
@@ -419,14 +413,14 @@ def test_video_recode_codec_override():
     assert os.path.getsize(output_path_b) > os.path.getsize(output_path_a)
 
     video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.NORMAL, None, codec_override='vp9')
-    smart_cut_with_catch(source_container, segments, output_path_a, video_settings=video_settings, log_level='warning')
+    smart_cut(source_container, segments, output_path_a, video_settings=video_settings, log_level='warning')
 
     output_container = MediaContainer(output_path_a)
     assert output_container.video_stream.codec_context.name == 'vp9', f'codec should be vp9, found {output_container.video_stream.codec_context.name}'
     check_videos_equal(source_container, output_container)
 
     video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.HIGH, None, codec_override='vp9')
-    smart_cut_with_catch(source_container, segments, output_path_b, video_settings=video_settings, log_level='warning')
+    smart_cut(source_container, segments, output_path_b, video_settings=video_settings, log_level='warning')
 
     output_container = MediaContainer(output_path_b)
     assert output_container.video_stream.codec_context.name == 'vp9', f'codec should be vp9, found {output_container.video_stream.codec_context.name}'
@@ -434,15 +428,16 @@ def test_video_recode_codec_override():
 
     assert os.path.getsize(output_path_b) > os.path.getsize(output_path_a)
 
+    # These tests are very slow because the encoders are slow
     # video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.NORMAL, None, codec_override='av1')
-    # smart_cut_with_catch(source_container, segments, output_path_a, video_settings=video_settings, log_level='warning')
+    # smart_cut(source_container, segments, output_path_a, video_settings=video_settings, log_level='warning')
 
     # output_container = MediaContainer(output_path_a)
     # assert output_container.video_stream.codec_context.name == 'libdav1d', f'codec should be av1, found {output_container.video_stream.codec_context.name}'
     # check_videos_equal(source_container, output_container)
 
     # video_settings = VideoSettings(VideoExportMode.RECODE, VideoExportQuality.HIGH, None, codec_override='vp9')
-    # smart_cut_with_catch(source_container, segments, output_path_b, video_settings=video_settings, log_level='warning')
+    # smart_cut(source_container, segments, output_path_b, video_settings=video_settings, log_level='warning')
 
     # output_container = MediaContainer(output_path_b)
     # assert output_container.video_stream.codec_context.name == 'libdav1d', f'codec should be av1 found {output_container.video_stream.codec_context.name}'
@@ -840,7 +835,7 @@ def test_denoiser():
         settings = AudioExportSettings(codec='libvorbis', channels = 'mono', bitrate=64000, sample_rate=out_sr, denoise=1)
         export_info = AudioExportInfo(mix_info=mix, mix_export_settings=settings)
 
-        smart_cut_with_catch(source_container, segments, output_path, audio_export_info=export_info)
+        smart_cut(source_container, segments, output_path, audio_export_info=export_info)
 
         output_container = MediaContainer(output_path)
         assert len(output_container.audio_tracks) == 1
@@ -864,7 +859,7 @@ def test_denoiser():
     # output denoise
     mix_export_settings = AudioExportSettings(codec='libvorbis', channels='mono', bitrate=92_000, sample_rate=48_000, denoise=2)
     export_info = AudioExportInfo(mix, mix_export_settings)
-    smart_cut_with_catch(source_container, segments, output_path, audio_export_info=export_info)
+    smart_cut(source_container, segments, output_path, audio_export_info=export_info)
 
     result_container = MediaContainer(output_path)
     assert_silence(result_container.audio_tracks[0])
@@ -872,7 +867,7 @@ def test_denoiser():
     # input 0 denoise
     mix_export_settings = AudioExportSettings(codec='libvorbis', channels='mono', bitrate=92_000, sample_rate=48_000, denoise=0)
     export_info = AudioExportInfo(mix, mix_export_settings)
-    smart_cut_with_catch(source_container, segments, output_path, audio_export_info=export_info)
+    smart_cut(source_container, segments, output_path, audio_export_info=export_info)
 
     result_container = MediaContainer(output_path)
     compare_tracks(source_container.audio_tracks[1], result_container.audio_tracks[0])
@@ -880,7 +875,7 @@ def test_denoiser():
     # input 1 denoise
     mix_export_settings = AudioExportSettings(codec='libvorbis', channels='mono', bitrate=92_000, sample_rate=48_000, denoise=1)
     export_info = AudioExportInfo(mix, mix_export_settings)
-    smart_cut_with_catch(source_container, segments, output_path, audio_export_info=export_info)
+    smart_cut(source_container, segments, output_path, audio_export_info=export_info)
 
     result_container = MediaContainer(output_path)
     compare_tracks(source_container.audio_tracks[0], result_container.audio_tracks[0])
