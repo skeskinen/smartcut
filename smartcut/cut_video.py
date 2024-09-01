@@ -541,7 +541,3 @@ def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fra
 
             if os.path.exists(last_file_path):
                 os.remove(last_file_path)
-
-    # except Exception as e:
-    #     return e
-    return None
