@@ -14,6 +14,11 @@ This means that you can cut even long video files in seconds!
 
 In contrast, [Smart Media Cutter](https://smartmediacutter.com) is fully-featured linear video editor with a lot more features like: Easy to use GUI, Transcript based editing (edit videos like text documents), Automatic silence cutting, Export timeline to editors like Resolve & Premiere and a generous free tier.
 
+## Demo
+<p align="center">
+  <a href=https://youtu.be/_OBDNVxydB4><img src="images/yt_thumbnail.png" alt="Logo" width="400"></a>
+</p>
+
 ## Open Sourced Features
 
 - **Efficient Cutting**: `smartcut` only recodes around the cutpoints, preserving the majority of the original video quality.
@@ -120,3 +125,4 @@ Tests ran in 147.1s
 
 * This project is part of [Smart Media Cutter](https://smartmediacutter)
 * We use [PyAV](https://github.com/PyAV-Org/PyAV) to interface with [ffmpeg](https://www.ffmpeg.org/) internals in a pythonic way
+* [avcut](https://github.com/anyc/avcut) is one of better smartcut implementations and their code was useful in understanding some of the nuances
