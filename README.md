@@ -123,7 +123,7 @@ Tests ran in 147.1s
 
 ## Acknowledgements
 
-* This project is part of [Smart Media Cutter](https://smartmediacutter)
+* This project is part of [Smart Media Cutter](https://smartmediacutter.com)
 * We use [PyAV](https://github.com/PyAV-Org/PyAV) to interface with [ffmpeg](https://www.ffmpeg.org/) internals in a pythonic way
 * [avcut](https://github.com/anyc/avcut) is one of better smartcut implementations and their code was useful in understanding some of the nuances
 
