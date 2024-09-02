@@ -126,3 +126,15 @@ Tests ran in 147.1s
 * This project is part of [Smart Media Cutter](https://smartmediacutter)
 * We use [PyAV](https://github.com/PyAV-Org/PyAV) to interface with [ffmpeg](https://www.ffmpeg.org/) internals in a pythonic way
 * [avcut](https://github.com/anyc/avcut) is one of better smartcut implementations and their code was useful in understanding some of the nuances
+
+
+## Other projects
+
+* [lossless-cut](https://github.com/mifi/lossless-cut) has an experimental smartcut mode. Being an experimental feature, it's not really supported. [Link to discussion](https://github.com/mifi/lossless-cut/issues/126)
+* [VidCutter](https://github.com/ozmartian/vidcutter) also has an experimental smartcut mode.
+* [This shell script github gist](https://gist.github.com/fernandoherreradelasheras/5eca67f4200f1a7cc8281747da08496e) inspired the lossless-cut implementation of smartcutting.
+* [VideoReDo](https://www.videohelp.com/software/VideoReDo) was a popular closed source frame accurate video trimming tool. It is no longer supported.
+* [SolveigMM Video Splitter](https://www.solveigmm.com/en/products/video-splitter/) and [TMPGEnc MPEG Smart Renderer](https://tmpgenc.pegasys-inc.com/en/product/tmsr6.html) are 2 other commercial smartcutting tools. I have no experience with these. [Here's one review](https://github.com/mifi/lossless-cut/issues/126#issuecomment-2035823788)
+* [mp3splt](https://mp3splt.sourceforge.net/mp3splt_page/home.php) does lossless cutting of mp3, vorbis and other audio formats
+* [mp3DirectCut](https://mpesch3.de/) is a proprietary audio lossless cutting tool. This one supports mp3 and aac.
+* [Avidemux](https://avidemux.sourceforge.net/) used to have a mode called [SmartCopy](https://www.avidemux.org/admWiki/doku.php?id=using:cutting#intra_frames_and_smartcopy) but according to [this forum post](https://avidemux.org/smif/index.php?topic=16372.0) it was removed in avidemux 2.6 and current version only supports cutting on keyframes (at least I think so).
