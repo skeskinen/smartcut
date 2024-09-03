@@ -50,6 +50,7 @@ class MediaContainer:
     gop_start_times: np.ndarray # Smallest pts in a GOP
 
     audio_tracks: list[AudioTrack]
+    subtitle_tracks: list
 
     chat_url: str | None
     chat_history: np.ndarray | None
@@ -88,6 +89,13 @@ class MediaContainer:
             self.audio_tracks.append(track)
             stream_index_to_audio_track[a_s.index] = track
 
+        self.subtitle_tracks = []
+        stream_index_to_subtitle_track = {}
+        for i, s in enumerate(av_container.streams.subtitles):
+            streams.append(s)
+            stream_index_to_subtitle_track[s.index] = i
+            self.subtitle_tracks.append([])
+
         video_keyframe_indices = []
 
         for packet in av_container.demux(streams):
@@ -99,13 +107,15 @@ class MediaContainer:
                     video_keyframe_indices.append(len(frame_pts))
 
                 frame_pts.append(packet.pts)
-            else:
+            elif packet.stream.type == 'audio':
                 track = stream_index_to_audio_track[packet.stream_index]
                 track.last_packet = packet
 
                 # NOTE: storing the audio packets like this keeps the whole compressed audio loaded in RAM
                 track.packets.append(packet)
                 track.frame_times.append(packet.pts)
+            elif packet.stream.type == 'subtitle':
+                self.subtitle_tracks[stream_index_to_subtitle_track[packet.stream_index]].append(packet)
 
         # Adding 1ms of extra to make sure we include the last frame in the output
         self.eof_time = est_eof_time + Fraction(1, 1000)

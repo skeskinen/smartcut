@@ -122,6 +122,58 @@ class PassthruAudioCutter:
     def finish(self):
         return []
 
+class SubtitleCutter:
+    def __init__(self, media_container: MediaContainer, output_av_container: av.container.Container, subtitle_track_index: int):
+        self.track_i = subtitle_track_index
+        self.packets = media_container.subtitle_tracks[subtitle_track_index]
+
+        self.in_stream = media_container.av_containers[0].streams.subtitles[subtitle_track_index]
+        self.out_stream = output_av_container.add_stream(template=self.in_stream)
+        self.out_stream.metadata.update(self.in_stream.metadata)
+        self.segment_start_in_output = 0
+        self.prev_pts = -100_000
+
+        self.current_packet_i = 0
+
+    def segment(self, cut_segment: CutSegment) -> list[av.Packet]:
+        segment_start_pts = int(cut_segment.start_time / self.in_stream.time_base)
+        segment_end_pts = int(cut_segment.end_time / self.in_stream.time_base)
+
+        out_packets = []
+
+        # TODO: This is the simplest implementation of subtitle cutting. Investigate more complex logic.
+        # We include subtitles for the whole original time if the subtitle start time is included in the output
+        # Good: simple, Bad: 1) if start is cut it's not shown at all 2) we can show a subtitle for too long if there is cut after it's shown
+        while self.current_packet_i < len(self.packets):
+            p = self.packets[self.current_packet_i]
+            if p.pts < segment_start_pts:
+                self.current_packet_i += 1
+            elif p.pts >= segment_start_pts and p.pts < segment_end_pts:
+                out_packets.append(p)
+                self.current_packet_i += 1
+            else:
+                break
+
+        for packet in out_packets:
+            packet.stream = self.out_stream
+            packet.pts = int(packet.pts - segment_start_pts + self.segment_start_in_output)
+
+            if packet.pts < self.prev_pts:
+                print("Correcting for too low pts in subtitle passthru. This should not happen.")
+                packet.pts = self.prev_pts + 1
+            packet.dts = packet.pts
+            self.prev_pts = packet.pts
+            self.prev_dts = packet.dts
+
+        segment_duration = cut_segment.end_time - cut_segment.start_time
+        # NOTE: Packet timestamps are still in input time_base
+        self.segment_start_in_output += segment_duration / self.in_stream.time_base
+        return out_packets
+
+    def finish(self):
+        return []
+
+
 class VideoExportMode(Enum):
     SMARTCUT = 1
     KEYFRAMES = 2
@@ -509,6 +561,9 @@ def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fra
                             generators.append(PassthruAudioCutter(media_container, output_av_container, track_i, track_export_settings))
                         else:
                             generators.append(RecodeTrackAudioCutter(media_container, output_av_container, track_i, track_export_settings))
+
+            for sub_track_i in range(len(media_container.subtitle_tracks)):
+                generators.append(SubtitleCutter(media_container, output_av_container, sub_track_i))
 
             output_av_container.start_encoding()
             if progress is not None:
