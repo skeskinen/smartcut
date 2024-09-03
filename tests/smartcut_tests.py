@@ -1,5 +1,6 @@
 from fractions import Fraction
 import os
+import sys
 from time import time
 import traceback
 import av.logging
@@ -25,6 +26,11 @@ np.random.seed(12345)
 av.logging.set_level(av.logging.ERROR)
 
 data_dir = 'test_data'
+
+if len(sys.argv) == 2:
+    manual_input = os.path.abspath(sys.argv[1])
+else:
+    manual_input = None
 
 os.chdir(os.path.dirname(__file__))
 os.makedirs(data_dir, exist_ok=True)
@@ -1059,4 +1065,8 @@ def run_tests():
     print(f'Tests ran in {(time() - perf_timer):0.1f}s')
 
 if __name__ == "__main__":
-    run_tests()
+    if manual_input is None:
+        run_tests()
+    else:
+        test_smart_cut(manual_input, os.path.split(sys.argv[1])[1], 5)
+        print("Done")

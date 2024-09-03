@@ -436,7 +436,7 @@ class VideoCutter:
                 break
 
             if packet.pts < segment_start_pts:
-                print("Skipping video packets. Seeking to wrong spot?")
+                # print("Skipping video packets. Seeking to wrong spot?")
                 continue
 
             packet.pts -= segment_start_pts
