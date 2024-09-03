@@ -107,7 +107,8 @@ class MediaContainer:
                 track.packets.append(packet)
                 track.frame_times.append(packet.pts)
 
-        self.eof_time = est_eof_time
+        # Adding 1ms of extra to make sure we include the last frame in the output
+        self.eof_time = est_eof_time + Fraction(1, 1000)
 
         if self.video_stream is not None:
             self.video_frame_times = np.sort(np.array(frame_pts)) * self.video_stream.time_base
