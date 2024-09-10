@@ -220,6 +220,9 @@ class VideoCutter:
         else:
             self.out_stream = output_av_container.add_stream(template=self.in_stream)
             self.codec_name = self.in_stream.codec_context.name
+            if self.codec_name == 'mpeg2video':
+                # self.out_stream.average_rate = self.in_stream.average_rate
+                self.out_stream.base_rate = self.in_stream.base_rate
 
             self.remux_bitstream_filter = av.bitstream.BitStreamFilterContext('null', self.in_stream, self.out_stream)
             if self.in_stream.codec_context.name == 'h264':
@@ -430,7 +433,10 @@ class VideoCutter:
             enc_codec.width = muxing_codec.width
             enc_codec.height = muxing_codec.height
             enc_codec.pix_fmt = muxing_codec.pix_fmt
-            enc_codec.time_base = self.out_stream.time_base
+            if self.codec_name == 'mpeg2video':
+                enc_codec.time_base = Fraction(1, muxing_codec.rate)
+            else:
+                enc_codec.time_base = self.out_stream.time_base
             enc_codec.flags = muxing_codec.flags
             enc_codec.global_header = False # Force writing of headers to the output stream
             if muxing_codec.bit_rate is not None:
@@ -441,8 +447,9 @@ class VideoCutter:
             enc_codec.thread_type = "FRAME"
             self.enc_codec = enc_codec
 
-        self.input_av_container.seek(segment_start_pts, stream=self.in_stream)
+        self.input_av_container.seek(segment_start_pts-10, stream=self.in_stream)
 
+        last_pts = -1
         for frame in self.input_av_container.decode(self.in_stream):
             if frame.pts < segment_start_pts:
                 continue
@@ -458,19 +465,34 @@ class VideoCutter:
             frame.pts = frame.pts * self.in_stream.time_base / self.out_time_base
             frame.time_base = self.out_time_base
             frame.pts += self.segment_start_in_output
+            print(f"frame {frame}")
 
+            if frame.pts <= last_pts:
+                frame.pts = last_pts + 1
+            last_pts = frame.pts
             frame.pict_type = av.video.frame.PictureType.NONE
             result_packets.extend(self.enc_codec.encode(frame))
 
+        if self.codec_name == 'mpeg2video':
+            for p in result_packets:
+                p.pts = p.pts / self.out_time_base / self.enc_codec.rate
+                p.dts = p.dts / self.out_time_base / self.enc_codec.rate
+                p.time_base = self.out_time_base
         return result_packets
 
     def flush_encoder(self):
         if self.enc_codec is None:
             return []
 
-        r = self.enc_codec.encode()
+        result_packets = self.enc_codec.encode()
+
+        if self.codec_name == 'mpeg2video':
+            for p in result_packets:
+                p.pts = p.pts / self.out_time_base / self.enc_codec.rate
+                p.dts = p.dts / self.out_time_base / self.enc_codec.rate
+                p.time_base = self.out_time_base
         self.enc_codec = None
-        return r
+        return result_packets
 
     def remux_segment(self, s: CutSegment) -> list[av.Packet]:
         result_packets = []
@@ -580,8 +602,9 @@ def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fra
                 assert s.start_time < s.end_time
                 for g in generators:
                     for packet in g.segment(s):
-                        # if isinstance(g, VideoCutter):
-                        # print(packet)
+                        if isinstance(g, VideoCutter):
+                            if packet.dts > 468468:
+                                print(packet)
                         output_av_container.mux(packet)
             for g in generators:
                 for packet in g.finish():
