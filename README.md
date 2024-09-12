@@ -58,9 +58,9 @@ The CLI requires the input and output file paths as positional arguments. You ca
 
 - **Cut specific segments**:
 
-  `smartcut.exe input.mp4 output.mp4 --cut 30,40,60,70`
+  `smartcut.exe input.mp4 output.mp4 --cut 30,40,01:00,01:10`
 
-  This cuts out the segments from 30s to 40s and from 60s to 70s, keeping the rest.
+  This cuts out the segments from 30s to 40s and from 1m to 1m10s, keeping the rest.
 
 - **Specify log level**:
 
