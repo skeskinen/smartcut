@@ -84,7 +84,6 @@ Some of the tests depend on components in the GUI app that are not open-source. 
 
 Normal test run looks like this:
 ```
-python tests/smartcut_tests.py
 Skipping smc tests
 test_h264_cut_on_keyframes: PASS
 test_h264_smart_cut: PASS
@@ -102,8 +101,17 @@ test_mp4_smart_cut: PASS
 test_mp4_to_mkv_smart_cut: PASS
 test_mkv_to_mp4_smart_cut: PASS
 test_vp9_smart_cut: PASS
-test_av1_smart_cut: PASS
 test_vp9_profile_1: PASS
+test_av1_smart_cut: PASS
+test_avi_smart_cut: PASS
+test_flv_smart_cut: PASS
+test_mov_smart_cut: PASS
+test_wmv_smart_cut: PASS
+test_mpg_cut_on_keyframes: PASS
+test_mpg_smart_cut: PASS
+test_m2ts_mpeg2_smart_cut: PASS
+test_m2ts_h264_smart_cut: PASS
+test_ts_smart_cut: PASS
 test_night_sky: PASS
 test_night_sky_to_mkv: PASS
 test_sunset: PASS
@@ -118,7 +126,8 @@ test_video_recode_codec_override: PASS
 test_vorbis_passthru: PASS
 test_mkv_with_video_and_audio_passthru: PASS
 test_mp3_passthru: PASS
-Tests ran in 147.1s
+test_seeking: PASS
+Tests ran in 153.6s
 ```
 
 ## Acknowledgements

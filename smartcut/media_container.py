@@ -11,6 +11,7 @@ def ts_to_time(ts):
 
 @dataclass
 class AudioTrack():
+    media_container: object
     av_stream: av.stream.Stream
     audio_load_stream: av.stream.Stream
     path: str
@@ -26,7 +27,7 @@ class AudioTrack():
     error_msg: str = None
     audio_16k: np.array = None
 
-    duration: Fraction = None
+    eof_time: Fraction = None
     shift: float = 0.0
     max_tree: np.array = None
 
@@ -35,6 +36,12 @@ class AudioTrack():
 
     def selected_for_transcript(self):
         return self.controls is None or self.controls.transcript_button.isChecked()
+
+    def duration(self) -> Fraction:
+        return self.eof_time - self.media_container.start_time
+
+    def start_time(self) -> Fraction:
+        return self.media_container.start_time
 
 class MediaContainer:
     av_containers: list[av.container.Container]
@@ -47,7 +54,10 @@ class MediaContainer:
 
     video_frame_times: np.ndarray
     video_keyframe_indices: list[int]
-    gop_start_times: np.ndarray # Smallest pts in a GOP
+    gop_start_times_pts_s: list[int] # Smallest pts in a GOP, in seconds
+
+    gop_start_times_dts: list[int]
+    gop_end_times_dts: list[int]
 
     audio_tracks: list[AudioTrack]
     subtitle_tracks: list
@@ -71,6 +81,7 @@ class MediaContainer:
         self.chat_url = None
         self.chat_history = None
         self.chat_visualize = True
+        self.start_time = 0
 
         if len(av_container.streams.video) == 0:
             self.video_stream = None
@@ -79,13 +90,15 @@ class MediaContainer:
             self.video_stream = av_container.streams.video[0]
             self.video_stream.thread_type = "FRAME"
             streams = [self.video_stream] + list(av_container.streams.audio)
+            if self.video_stream.start_time is not None:
+                self.start_time = self.video_stream.start_time * self.video_stream.time_base
 
         self.audio_tracks = []
         stream_index_to_audio_track = {}
         for i, (a_s, loading_s) in enumerate(zip(av_container.streams.audio, audio_loading_container.streams.audio)):
             a_s.thread_type = "FRAME"
             loading_s.thread_type = "FRAME"
-            track = AudioTrack(a_s, loading_s, path, i, i)
+            track = AudioTrack(self, a_s, loading_s, path, i, i)
             self.audio_tracks.append(track)
             stream_index_to_audio_track[a_s.index] = track
 
@@ -98,6 +111,10 @@ class MediaContainer:
 
         video_keyframe_indices = []
 
+        self.gop_start_times_dts = []
+        self.gop_end_times_dts = []
+        last_seen_video_dts = -1
+
         for packet in av_container.demux(streams):
             if packet.pts is None:
                 continue
@@ -105,7 +122,11 @@ class MediaContainer:
             if packet.stream.type == 'video':
                 if packet.is_keyframe:
                     video_keyframe_indices.append(len(frame_pts))
-
+                    dts = packet.dts if packet.dts is not None else -100_000_000
+                    self.gop_start_times_dts.append(dts)
+                    if last_seen_video_dts > 0:
+                        self.gop_end_times_dts.append(last_seen_video_dts)
+                last_seen_video_dts = packet.dts
                 frame_pts.append(packet.pts)
             elif packet.stream.type == 'audio':
                 track = stream_index_to_audio_track[packet.stream_index]
@@ -121,38 +142,40 @@ class MediaContainer:
         self.eof_time = est_eof_time + Fraction(1, 1000)
 
         if self.video_stream is not None:
+            self.gop_end_times_dts.append(last_seen_video_dts)
             self.video_frame_times = np.sort(np.array(frame_pts)) * self.video_stream.time_base
 
-            self.gop_start_times = self.video_frame_times[video_keyframe_indices]
+            self.gop_start_times_pts_s = list(self.video_frame_times[video_keyframe_indices])
 
         for t in self.audio_tracks:
             frame_times = np.array(t.frame_times)
             t.frame_times = frame_times * t.av_stream.time_base
             # last_packet = t.packets[-1]
             last_packet = t.last_packet
-            t.duration = (last_packet.pts + last_packet.duration) * last_packet.time_base
+            t.eof_time = (last_packet.pts + last_packet.duration) * last_packet.time_base
+
+    def duration(self):
+        return self.eof_time - self.start_time
 
     def close(self):
         for c in self.av_containers:
             c.close()
 
-    def get_video_frame_from_time(self, t):
+    def get_next_frame_time(self, t):
+        t += self.start_time
         idx = np.searchsorted(self.video_frame_times, t)
         if idx == len(self.video_frame_times):
-            return self.eof_time, idx
+            return self.duration()
         elif idx == 0:
-            return self.video_frame_times[0], 0
+            return self.video_frame_times[0] - self.start_time
         # Otherwise, find the closest of the two possible candidates: arr[idx-1] and arr[idx]
         else:
             prev_val = self.video_frame_times[idx - 1]
             next_val = self.video_frame_times[idx]
             if t - prev_val <= next_val - t:
-                return prev_val, idx - 1
+                return prev_val - self.start_time
             else:
-                return next_val, idx
-
-    def get_video_frame_from_ts(self, ts):
-        return self.get_video_frame_from_time(ts_to_time(ts))
+                return next_val - self.start_time
 
     def add_audio_file(self, path):
         av_container = av.open(path, 'r', metadata_errors='ignore')
@@ -164,7 +187,7 @@ class MediaContainer:
         stream.thread_type = "FRAME"
         audio_load_stream = audio_load_container.streams.audio[idx]
         audio_load_stream.thread_type = "FRAME"
-        track = AudioTrack(stream, audio_load_stream, path, len(self.audio_tracks), 0)
+        track = AudioTrack(self, stream, audio_load_stream, path, len(self.audio_tracks), 0)
         self.audio_tracks.append(track)
 
         est_eof_time = 0
@@ -181,7 +204,7 @@ class MediaContainer:
         track.frame_times = np.array(track.frame_times)
         track.frame_times = track.frame_times * stream.time_base
         last_packet = track.packets[-1]
-        track.duration = (last_packet.pts + last_packet.duration) * last_packet.time_base
+        track.eof_time = (last_packet.pts + last_packet.duration) * last_packet.time_base
         return track
 
 class AudioReader:
@@ -200,6 +223,8 @@ class AudioReader:
         self.resampler = None
 
     def read(self, start, end) -> np.ndarray:
+        start += self.track.start_time()
+        end += self.track.start_time()
         dur = end - start
         buffer = np.zeros((round(self.stream.rate * dur), self.stream.channels), np.float32)
         start_in_samples = round(start * self.stream.rate)
@@ -217,23 +242,19 @@ class AudioReader:
         for p in chain(self.track.packets[start:], [None]):
             # print(p)
             for f in self.codec.decode(p):
-                # print(f)
-
-                # NOTE: Why is time_base so *#!*
-                # time_base = f.time_base if f.time_base is not None else self.stream.time_base
                 f_start = f.pts * self.stream.time_base
                 f_end = f_start + Fraction(f.samples, f.sample_rate)
-                # print(start, f_start, f_end, time_base)
-                # exit()
 
                 if first:
                     if f.pts in self.track.pts_to_samples:
                         sample_pos = self.track.pts_to_samples[f.pts]
                     else:
                         sample_pos = round(f_start * f.sample_rate)
-                    first = False
-                elif abs(time_pos - f_start) > 0.02:
-                    print('Skipping a gap in audio pts', time_pos, f_start)
+                    # Set the sample position from the first non-negative packet.
+                    # E.g. if packets are -23 & 0 dts: the 0 sets the sample position to 0
+                    first = f.pts < 0
+                elif abs(time_pos - f_start) > 0.04:
+                    print(f'Skipping a gap in audio pts track: {self.track.index},  t:{float(time_pos):.1f}, t based on pts: {float(f_start):.1f}')
                     if f.pts in self.track.pts_to_samples:
                         sample_pos = self.track.pts_to_samples[f.pts]
                     else:

@@ -1,4 +1,5 @@
 import argparse
+import av
 import numpy as np
 from fractions import Fraction
 from smartcut.media_container import MediaContainer
@@ -43,7 +44,7 @@ def main():
         segments = parse_time_segments(args.keep)
     elif args.cut:
         cut_segments = parse_time_segments(args.cut)
-        segments = [(Fraction(0), source.eof_time)]
+        segments = [(Fraction(0), source.duration())]
         for c_start, c_end in cut_segments:
             last_segment = segments.pop()
             if c_start > last_segment[0]:
@@ -60,6 +61,13 @@ def main():
     video_settings = VideoSettings(VideoExportMode.SMARTCUT, VideoExportQuality.NORMAL, None)
 
     progress = Progress()
+
+    if args.log_level == 'warning':
+        av.logging.set_level(av.logging.WARNING)
+    if args.log_level == 'error':
+        av.logging.set_level(av.logging.ERROR)
+    if args.log_level == 'fatal':
+        av.logging.set_level(av.logging.FATAL)
 
     exception_value = smart_cut(source, segments, args.output,
                                 audio_export_info=export_info,
