@@ -44,7 +44,7 @@ def main():
     parser.add_argument('--keep', type=str, help="Comma-separated list of start,end times to keep in seconds")
     parser.add_argument('--cut', type=str, help="Comma-separated list of start,end times to cut in seconds")
     parser.add_argument('--log-level', type=str, default='warning', help="Log level (default: warning)")
-    parser.add_argument('--version', action='version', version='Smartcut 1.0.0')
+    parser.add_argument('--version', action='version', version='Smartcut 1.1.0')
 
     args = parser.parse_args()
 
