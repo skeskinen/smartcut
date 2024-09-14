@@ -1,12 +1,25 @@
 import argparse
+import contextlib
 import numpy as np
+from datetime import datetime
 from fractions import Fraction
 from smartcut.media_container import MediaContainer
 from smartcut.cut_video import smart_cut, VideoSettings, VideoExportMode, VideoExportQuality, AudioExportSettings, AudioExportInfo
 from tqdm import tqdm
 
+def time_to_fraction(time_str_elem):
+    if ':' in time_str_elem:
+        for pattern in ["%H:%M:%S", "%M:%S"]:
+            with contextlib.suppress(ValueError):
+                if time := datetime.strptime(time_str_elem, pattern):
+                    return Fraction(time.hour * 3600 + time.minute * 60 + time.second)
+        else:
+            raise ValueError("Timestamp must match HH:MM:SS or MM:SS")
+
+    return Fraction(time_str_elem)
+    
 def parse_time_segments(time_str):
-    times = list(map(Fraction, time_str.split(',')))
+    times = list(map(time_to_fraction, time_str.split(',')))
     if len(times) % 2 != 0:
         raise ValueError("You must provide an even number of time points for segments.")
     return list(zip(times[::2], times[1::2]))
