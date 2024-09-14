@@ -1,6 +1,7 @@
 from enum import Enum
 from fractions import Fraction
 
+import itertools
 from math import e
 import os
 from typing import List
@@ -54,9 +55,9 @@ def make_cut_segments(media_container: MediaContainer,
             cut_segments.append(CutSegment(False, s, p[1]))
         return cut_segments
 
-    source_cutpoints = list(media_container.gop_start_times) + [media_container.eof_time]
+    source_cutpoints = media_container.gop_start_times_pts_s + [media_container.eof_time]
     p = 0
-    for (i, o) in zip(source_cutpoints[:-1], source_cutpoints[1:]):
+    for (i, o, i_dts, o_dts) in zip(source_cutpoints[:-1], source_cutpoints[1:], media_container.gop_start_times_dts, media_container.gop_end_times_dts):
         while p < len(positive_segments) and positive_segments[p][1] <= i:
             p += 1
 
@@ -64,16 +65,16 @@ def make_cut_segments(media_container: MediaContainer,
         if p == len(positive_segments) or o <= positive_segments[p][0]:
             pass
         elif keyframe_mode or (i >= positive_segments[p][0] and o <= positive_segments[p][1]):
-            cut_segments.append(CutSegment(False, i, o))
+            cut_segments.append(CutSegment(False, i, o, i_dts, o_dts))
         else:
             if i > positive_segments[p][0]:
-                cut_segments.append(CutSegment(True, i, positive_segments[p][1]))
+                cut_segments.append(CutSegment(True, i, positive_segments[p][1], i_dts, o_dts))
                 p += 1
             while p < len(positive_segments) and positive_segments[p][1] < o:
-                cut_segments.append(CutSegment(True, positive_segments[p][0], positive_segments[p][1]))
+                cut_segments.append(CutSegment(True, positive_segments[p][0], positive_segments[p][1], i_dts, o_dts))
                 p += 1
             if p < len(positive_segments) and positive_segments[p][0] < o:
-                cut_segments.append(CutSegment(True, positive_segments[p][0], o))
+                cut_segments.append(CutSegment(True, positive_segments[p][0], o, i_dts, o_dts))
 
     return cut_segments
 
@@ -95,15 +96,14 @@ class PassthruAudioCutter:
         end = np.searchsorted(self.track.frame_times, cut_segment.end_time)
         in_packets = self.track.packets[start : end]
 
-        segment_start_pts = int(cut_segment.start_time / self.track.av_stream.time_base)
-
+        in_tb = self.track.av_stream.time_base
         packets = []
         for p in in_packets:
             packet = copy_packet(p)
             # packet = p
             packet.stream = self.out_stream
-            packet.pts = int(packet.pts - segment_start_pts + self.segment_start_in_output)
-            packet.dts = int(packet.dts - segment_start_pts + self.segment_start_in_output)
+            packet.pts = int(packet.pts + (self.segment_start_in_output - cut_segment.start_time) / in_tb)
+            packet.dts = int(packet.dts + (self.segment_start_in_output - cut_segment.start_time) / in_tb)
             if packet.pts <= self.prev_pts:
                 print("Correcting for too low pts in audio passthru")
                 packet.pts = self.prev_pts + 1
@@ -114,9 +114,7 @@ class PassthruAudioCutter:
             self.prev_dts = packet.dts
             packets.append(packet)
 
-        segment_duration = cut_segment.end_time - cut_segment.start_time
-        # NOTE: Packet timestamps are still in input time_base
-        self.segment_start_in_output += segment_duration / self.track.av_stream.time_base
+        self.segment_start_in_output += cut_segment.end_time - cut_segment.start_time
         return packets
 
     def finish(self):
@@ -156,7 +154,7 @@ class SubtitleCutter:
 
         for packet in out_packets:
             packet.stream = self.out_stream
-            packet.pts = int(packet.pts - segment_start_pts + self.segment_start_in_output)
+            packet.pts = int(packet.pts - segment_start_pts + self.segment_start_in_output / self.in_stream.time_base)
 
             if packet.pts < self.prev_pts:
                 print("Correcting for too low pts in subtitle passthru. This should not happen.")
@@ -165,9 +163,7 @@ class SubtitleCutter:
             self.prev_pts = packet.pts
             self.prev_dts = packet.dts
 
-        segment_duration = cut_segment.end_time - cut_segment.start_time
-        # NOTE: Packet timestamps are still in input time_base
-        self.segment_start_in_output += segment_duration / self.in_stream.time_base
+        self.segment_start_in_output += cut_segment.end_time - cut_segment.start_time
         return out_packets
 
     def finish(self):
@@ -204,22 +200,31 @@ class VideoCutter:
 
         self.enc_codec = None
 
+        self.frame_cache = []
+        self.frame_cache_start_dts = -1
+
         self.in_stream = media_container.video_stream
-        self.input_av_container: av.container.Container = self.in_stream.container
+        # Open another container because seeking to beginning of the file is unreliable...
+        self.input_av_container: av.container.Container = av.open(media_container.path, 'r', metadata_errors='ignore')
 
         if video_settings.mode == VideoExportMode.RECODE and video_settings.codec_override != 'copy':
             self.out_stream = output_av_container.add_stream(video_settings.codec_override, rate=self.in_stream.guessed_rate)
             self.out_stream.width = self.in_stream.width
             self.out_stream.height = self.in_stream.height
+            self.out_stream.sample_aspect_ratio = self.in_stream.sample_aspect_ratio
             self.codec_name = video_settings.codec_override
 
             self.init_encoder()
             self.enc_codec = self.out_stream.codec_context
             self.enc_codec.options.update(self.encoding_options)
             self.enc_codec.thread_type = "FRAME"
+            self.enc_last_pts = -1
         else:
             self.out_stream = output_av_container.add_stream(template=self.in_stream)
             self.codec_name = self.in_stream.codec_context.name
+            # if self.codec_name == 'mpeg2video':
+                # self.out_stream.average_rate = self.in_stream.average_rate
+                # self.out_stream.base_rate = self.in_stream.base_rate
 
             self.remux_bitstream_filter = av.bitstream.BitStreamFilterContext('null', self.in_stream, self.out_stream)
             if self.in_stream.codec_context.name == 'h264':
@@ -257,6 +262,8 @@ class VideoCutter:
             elif 'High 4:4:4' in profile:
                 profile = 'high444'
             elif 'Rext' in profile: # This is some sort of h265 extension. This might be the source of some issues I've had?
+                profile = None
+            elif 'Simple' in profile: # mpeg4 didn't like my profile strings
                 profile = None
             else:
                 profile = profile.lower().replace(':', '').replace(' ', '')
@@ -382,8 +389,8 @@ class VideoCutter:
         else:
             packets = self.flush_encoder()
             packets.extend(self.remux_segment(cut_segment))
-        segment_duration = cut_segment.end_time - cut_segment.start_time
-        self.segment_start_in_output += segment_duration / self.out_stream.time_base
+
+        self.segment_start_in_output += cut_segment.end_time - cut_segment.start_time
 
         for packet in packets:
             packet.stream = self.out_stream
@@ -408,18 +415,14 @@ class VideoCutter:
                 packet.dts = self.last_dts + 1
                 self.last_dts = packet.dts
 
+        self.input_av_container.close()
+
         return packets
 
     def recode_segment(self, s: CutSegment) -> list[av.Packet]:
         if not self.encoder_inited:
             self.init_encoder()
         result_packets = []
-        segment_start_pts = int(s.start_time / self.in_stream.time_base)
-        segment_end_pts = int(s.end_time / self.in_stream.time_base)
-
-        # Fallback to always reset the encoder
-        # result_packets = self.flush_encoder()
-        # self.enc_codec = None
 
         if self.enc_codec is None:
             muxing_codec = self.out_stream.codec_context
@@ -430,7 +433,11 @@ class VideoCutter:
             enc_codec.width = muxing_codec.width
             enc_codec.height = muxing_codec.height
             enc_codec.pix_fmt = muxing_codec.pix_fmt
-            enc_codec.time_base = self.out_stream.time_base
+            enc_codec.sample_aspect_ratio = muxing_codec.sample_aspect_ratio
+            if self.codec_name == 'mpeg2video':
+                enc_codec.time_base = Fraction(1, muxing_codec.rate)
+            else:
+                enc_codec.time_base = self.out_stream.time_base
             enc_codec.flags = muxing_codec.flags
             enc_codec.global_header = False # Force writing of headers to the output stream
             if muxing_codec.bit_rate is not None:
@@ -439,72 +446,117 @@ class VideoCutter:
                 enc_codec.bit_rate_tolerance = muxing_codec.bit_rate_tolerance
             enc_codec.codec_tag = muxing_codec.codec_tag
             enc_codec.thread_type = "FRAME"
+            self.enc_last_pts = -1
             self.enc_codec = enc_codec
 
-        self.input_av_container.seek(segment_start_pts, stream=self.in_stream)
+        if self.frame_cache_start_dts != s.gop_start_dts:
+            self.frame_cache.clear()
+            self.frame_cache_start_dts = s.gop_start_dts
+            decoder = self.in_stream.codec_context
+            decoder.flush_buffers()
 
-        for frame in self.input_av_container.decode(self.in_stream):
-            if frame.pts < segment_start_pts:
+            packet, demux_iter = self.fetch_packet(s.gop_start_dts)
+            if packet is None:
+                return []
+            for packet in itertools.chain([packet], demux_iter):
+                for frame in decoder.decode(packet):
+                    self.frame_cache.append(frame)
+                if packet.dts == s.gop_end_dts:
+                    break
+                packet = self.input_av_container.demux(self.in_stream)
+            for frame in decoder.decode(None):
+                self.frame_cache.append(frame)
+
+            self.frame_cache.sort(key=lambda x: x.pts)
+
+        for frame in self.frame_cache:
+            in_tb = frame.time_base if frame.time_base is not None else self.in_stream.time_base
+            if frame.pts * in_tb < s.start_time:
                 continue
-            if frame.pts >= segment_end_pts:
+            if frame.pts * in_tb >= s.end_time:
                 break
 
+            out_tb = self.out_time_base if self.codec_name != 'mpeg2video' else self.enc_codec.time_base
             if self.transform_graph is not None:
                 self.transform_graph.vpush(frame)
                 frame = self.transform_graph.vpull()
 
-            frame.pts -= segment_start_pts
+            frame.pts -= s.start_time / in_tb
 
-            frame.pts = frame.pts * self.in_stream.time_base / self.out_time_base
-            frame.time_base = self.out_time_base
-            frame.pts += self.segment_start_in_output
+            frame.pts = frame.pts * in_tb / out_tb
+            frame.time_base = out_tb
+            frame.pts += self.segment_start_in_output / out_tb
+
+            if frame.pts <= self.enc_last_pts:
+                frame.pts = self.enc_last_pts + 1
+            self.enc_last_pts = frame.pts
 
             frame.pict_type = av.video.frame.PictureType.NONE
             result_packets.extend(self.enc_codec.encode(frame))
 
+        if self.codec_name == 'mpeg2video':
+            for p in result_packets:
+                p.pts = p.pts * p.time_base / self.out_time_base
+                p.dts = p.dts * p.time_base / self.out_time_base
+                p.time_base = self.out_time_base
+        return result_packets
+
+    def remux_segment(self, s: CutSegment) -> list[av.Packet]:
+        result_packets = []
+        segment_start_pts = int(s.start_time / self.in_stream.time_base)
+
+        packet, demux_iter = self.fetch_packet(s.gop_start_dts)
+        if packet is None:
+            return []
+        for packet in itertools.chain([packet], demux_iter):
+            last_packet = packet.dts == s.gop_end_dts
+            packet.pts -= segment_start_pts
+            packet.pts = packet.pts * self.in_stream.time_base / self.out_time_base
+            packet.pts += self.segment_start_in_output / self.out_time_base
+            if packet.dts is not None:
+                packet.dts -= segment_start_pts
+                packet.dts = packet.dts * self.in_stream.time_base / self.out_time_base
+                packet.dts += self.segment_start_in_output / self.out_time_base
+
+            result_packets.extend(self.remux_bitstream_filter.filter(packet))
+
+            if last_packet:
+                break
+
+        result_packets.extend(self.remux_bitstream_filter.filter(None))
+
+        self.remux_bitstream_filter.flush()
         return result_packets
 
     def flush_encoder(self):
         if self.enc_codec is None:
             return []
 
-        r = self.enc_codec.encode()
+        result_packets = self.enc_codec.encode()
+
+        if self.codec_name == 'mpeg2video':
+            for p in result_packets:
+                p.pts = p.pts * p.time_base / self.out_time_base
+                p.dts = p.dts * p.time_base / self.out_time_base
+                p.time_base = self.out_time_base
+
         self.enc_codec = None
-        return r
-
-    def remux_segment(self, s: CutSegment) -> list[av.Packet]:
-        result_packets = []
-        segment_start_pts = int(s.start_time / self.in_stream.time_base)
-        segment_end_pts = int(s.end_time / self.in_stream.time_base)
-
-        # print(f"seeking to {segment_start_pts}")
-        self.input_av_container.seek(segment_start_pts, stream=self.in_stream)
-
-        for packet in self.input_av_container.demux(self.in_stream):
-            # packet = copy_packet(p)
-            # print("in packet:", packet)
-
-            if packet.pts is None or packet.pts >= segment_end_pts:
-                break
-
-            if packet.pts < segment_start_pts:
-                # print("Skipping video packets. Seeking to wrong spot?")
-                continue
-
-            packet.pts -= segment_start_pts
-            packet.pts = packet.pts * self.in_stream.time_base / self.out_time_base
-            packet.pts += self.segment_start_in_output
-            if packet.dts is not None:
-                packet.dts -= segment_start_pts
-                packet.dts = packet.dts * self.in_stream.time_base / self.out_time_base
-                packet.dts += self.segment_start_in_output
-
-            result_packets.extend(self.remux_bitstream_filter.filter(packet))
-
-        result_packets.extend(self.remux_bitstream_filter.filter(None))
-
-        self.remux_bitstream_filter.flush()
         return result_packets
+
+    def fetch_packet(self, target_dts):
+        iter = self.input_av_container.demux(self.in_stream)
+        tb = self.in_stream.time_base
+        for packet in iter:
+            in_dts = packet.dts if packet.dts is not None else -100_000_000
+            if packet.pts is None or in_dts < target_dts:
+                diff = (target_dts - in_dts) * tb
+                if in_dts > 0 and diff > 120:
+                    t = int(target_dts - 30 / tb)
+                    # print(f"Seeking to skip a gap: {float(t * tb)}")
+                    self.input_av_container.seek(t, stream = self.in_stream)
+                continue
+            return packet, iter
+        return None, None
 
 def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fraction, Fraction]],
               out_path: str, audio_export_info: AudioExportInfo = None, log_level = None, progress = None,
@@ -512,7 +564,16 @@ def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fra
     if video_settings is None:
         video_settings = VideoSettings(VideoExportMode.SMARTCUT, VideoExportQuality.NORMAL, None)
 
-    cut_segments = make_cut_segments(media_container, positive_segments, video_settings.mode == VideoExportMode.KEYFRAMES)
+    adjusted_segment_times = []
+    for (s, e) in positive_segments:
+
+        if media_container.video_stream is not None and s == 0:
+            s = -1_000_000
+        else:
+            s = s + media_container.start_time
+        adjusted_segment_times.append((s, e + media_container.start_time))
+
+    cut_segments = make_cut_segments(media_container, adjusted_segment_times, video_settings.mode == VideoExportMode.KEYFRAMES)
 
     if video_settings.mode == VideoExportMode.RECODE:
         for c in cut_segments:
@@ -520,8 +581,8 @@ def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fra
 
     if segment_mode:
         output_files = []
-        padding = len(str(len(positive_segments)))
-        for i, s in enumerate(positive_segments):
+        padding = len(str(len(adjusted_segment_times)))
+        for i, s in enumerate(adjusted_segment_times):
             segment_index = str(i + 1).zfill(padding)  # Zero-pad the segment index
             if "#" in out_path:
                 pound_index = out_path.rfind("#")
@@ -537,7 +598,7 @@ def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fra
             output_files.append((output_file, s))
 
     else:
-        output_files = [(out_path, positive_segments[-1])]
+        output_files = [(out_path, adjusted_segment_times[-1])]
     previously_done_segments = 0
     for output_path_segment in output_files:
         if cancel_object is not None and cancel_object.cancelled:
@@ -581,6 +642,11 @@ def smart_cut(media_container: MediaContainer, positive_segments: List[tuple[Fra
                 for g in generators:
                     for packet in g.segment(s):
                         # if isinstance(g, VideoCutter):
+                            # if packet.dts > 468468:
+                        # print(float(packet.dts * output_av_container.streams.video[0].time_base))
+                        if packet.dts < -900_000:
+                            packet.dts = None
+
                         # print(packet)
                         output_av_container.mux(packet)
             for g in generators:

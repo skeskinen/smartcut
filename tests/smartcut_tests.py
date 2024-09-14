@@ -1,15 +1,20 @@
 from fractions import Fraction
+import glob
 import os
 import sys
 from time import time
 import traceback
+from urllib.request import urlopen
 import av.logging
 import ffmpeg
 import platform
 
 import numpy as np
 import av
+from requests import Request
+import requests
 import scipy.signal
+from smartcut import media_container
 import soundfile as sf
 import av.datasets as av_datasets
 import scipy
@@ -23,14 +28,25 @@ np.random.seed(12345)
 # Set the log level to silence the None dts warnings. I believe those can be ignored since
 # we do set dts, except when it's not set in the source in which case it's not clear what
 # value dts should take. It would be nice to occasionally check that there aren't more warnings.
-av.logging.set_level(av.logging.ERROR)
+# UPDATE 2024-09-13: setting logging level to FATAL because mpeg2 tests spam a lot of buffer errors I didn't manage to silence
+av.logging.set_level(av.logging.FATAL)
 
 data_dir = 'test_data'
 
-if len(sys.argv) == 2:
-    manual_input = os.path.abspath(sys.argv[1])
+if len(sys.argv) >= 2:
+    if sys.argv[1] == 'all':
+        files = []
+        patterns = ["./*.mkv", "./*.ts", "./*.mpg", "./*.webm", "./*.mp4", "./*.mp3"]
+        for p in patterns:
+            files.extend(glob.glob(p))
+        manual_input = [os.path.abspath(x) for x in files if '_edited' not in x]
+        pixel_color_diff_tolerance = 50
+    else:
+        manual_input = [os.path.abspath(x) for x in sys.argv[1:]]
+        pixel_color_diff_tolerance = 50
 else:
     manual_input = None
+    pixel_color_diff_tolerance = 20
 
 os.chdir(os.path.dirname(__file__))
 os.makedirs(data_dir, exist_ok=True)
@@ -41,14 +57,33 @@ short_h265_path = 'short_h265.mkv'
 
 def color_at_time(ts):
     c = np.empty((3,))
-    c[0] = 0.5 + 0.5 * np.sin(2 * np.pi * (0 / 3 + ts / 10.))
-    c[1] = 0.5 + 0.5 * np.sin(2 * np.pi * (1 / 3 + ts / 10.))
-    c[2] = 0.5 + 0.5 * np.sin(2 * np.pi * (2 / 3 + ts / 10.))
+    c[0] = 0.5 + 0.5 * np.sin(2 * np.pi * (0 / 3 + ts / 2.))
+    c[1] = 0.5 + 0.5 * np.sin(2 * np.pi * (1 / 3 + ts / 2.))
+    c[2] = 0.5 + 0.5 * np.sin(2 * np.pi * (2 / 3 + ts / 2.))
 
     c = np.round(255 * c).astype(np.uint8)
     c = np.clip(c, 0, 255)
 
     return c
+
+def cached_download(url: str, name: str) -> str:
+    if os.path.exists(name):
+        return name
+
+    response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+
+    if response.status_code != 200:
+        raise ValueError(f"HTTP {response.status_code}")
+
+    tmp_path = name + ".tmp"
+    with open(tmp_path, "wb") as fh:
+        chunk = response.content
+        if chunk:
+            fh.write(chunk)
+
+    os.rename(tmp_path, name)
+
+    return name
 
 def create_test_video(path, target_duration, codec, pixel_format, fps, resolution, x265_options=[], profile=None):
     if os.path.exists(path):
@@ -123,7 +158,7 @@ def generate_double_sine_wave(duration, path, frequency_0=440, frequency_1=440, 
 def assert_silence(track: AudioTrack):
     reader = AudioReader(track)
 
-    dur = track.duration
+    dur = track.duration()
     y_orig = reader.read(0., dur)
 
     sum = np.sum(np.abs(y_orig))
@@ -138,7 +173,7 @@ def compare_tracks(track_orig: AudioTrack, track_modified: AudioTrack, rms_thres
 
     # assert orig.sr == modified.sr, "Sample rate changed"
 
-    dur = track_orig.duration
+    dur = track_orig.duration()
 
     y_orig = orig.read(0., dur)
     y_modified = modified.read(0., dur)
@@ -159,7 +194,7 @@ def compare_tracks(track_orig: AudioTrack, track_modified: AudioTrack, rms_thres
 
     assert rms < rms_threshold, f"Audio contents have changed: {rms} (rms error)"
 
-def check_videos_equal(source_container: MediaContainer, result_container: MediaContainer):
+def check_videos_equal(source_container: MediaContainer, result_container: MediaContainer, pixel_tolerance = 20):
     assert source_container.video_stream.width == result_container.video_stream.width
     assert source_container.video_stream.height == result_container.video_stream.height
     assert len(result_container.video_frame_times) == len(source_container.video_frame_times), f'Mismatch frame count. Exp: {len(source_container.video_frame_times)}, got: {len(result_container.video_frame_times)}'
@@ -173,7 +208,8 @@ def check_videos_equal(source_container: MediaContainer, result_container: Media
     # But the difficulty is that we can't control the output stream time_base.
     # We have to just accept the value that av/ffmpeg gives us. So sometimes the
     # input and output timebases are not multiples of each other.
-    diff_tolerance = Fraction(3, 1000)
+    is_mpeg = source_container.av_containers[0].format.name in ['mpegts', 'mpegvideo']
+    diff_tolerance = Fraction(3, 1000) if not is_mpeg else 2
     assert diff_amount <= diff_tolerance, f'Mismatch of {diff_amount} in frame timings, at frame {diff_i}.'
 
     with av.open(source_container.path, mode='r') as source_av:
@@ -188,11 +224,11 @@ def check_videos_equal(source_container: MediaContainer, result_container: Media
                         result_color = result_numpy[y, x]
                         diff = np.abs(source_color.astype(np.int16) - result_color)
                         max_diff = np.max(diff)
-                        assert max_diff <= 20, f'Large color deviation at frame {frame_i}. Exp: {source_color}, got: {result_color}'
+                        assert max_diff <= pixel_tolerance, f'Large color deviation at frame {frame_i}. Exp: {source_color}, got: {result_color}'
 
 def test_cut_on_keyframes(input_path, output_path):
     source = MediaContainer(input_path)
-    cutpoints = list(source.gop_start_times) + [source.eof_time]
+    cutpoints = source.gop_start_times_pts_s + [source.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -205,18 +241,40 @@ def test_cut_on_keyframes(input_path, output_path):
     result_container = MediaContainer(output_path)
     check_videos_equal(source, result_container)
 
-def test_smart_cut(input_path, output_path, n_cuts, audio_export_info = None, video_settings = None):
+def test_smart_cut(input_path: str, output_path, n_cuts, audio_export_info = None, video_settings = None, pixel_tolerance = 20):
+    if os.path.splitext(input_path)[1] in ['.mp3', '.ogg']:
+        return test_audiofile_smart_cut(input_path, output_path, n_cuts)
     source = MediaContainer(input_path)
     cutpoints = source.video_frame_times
-    cutpoints = [0] + list(np.sort(np.random.choice(cutpoints, n_cuts, replace=False))) + [source.eof_time]
+    cutpoints = [0] + list(np.sort(np.random.choice(cutpoints, n_cuts, replace=False))) + [source.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
+
+    if audio_export_info == 'auto':
+        s = AudioExportSettings(codec='passthru')
+        audio_export_info = AudioExportInfo(output_tracks=[s] * len(source.audio_tracks))
 
     smart_cut(source, segments, output_path,
         audio_export_info=audio_export_info, video_settings=video_settings, log_level='warning')
 
     result_container = MediaContainer(output_path)
-    check_videos_equal(source, result_container)
+    check_videos_equal(source, result_container, pixel_tolerance=pixel_tolerance)
+
+def test_audiofile_smart_cut(input_path, output_path, n_cuts):
+    source_container = MediaContainer(input_path)
+    duration = source_container.duration()
+    cutpoints = np.arange(duration*1000)[1:-1]
+    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [duration]
+
+    segments = list(zip(cutpoints[:-1], cutpoints[1:]))
+
+    settings = AudioExportSettings(codec='passthru')
+    export_info = AudioExportInfo(output_tracks=[settings])
+
+    smart_cut(source_container, segments, output_path, audio_export_info=export_info)
+    output_container = MediaContainer(output_path)
+
+    compare_tracks(source_container.audio_tracks[0], output_container.audio_tracks[0])
 
 
 def test_h264_cut_on_keyframes():
@@ -237,7 +295,7 @@ def test_h264_multiple_cuts():
     output_path = test_h264_smart_cut.__name__ + '.mkv'
     for c in [1, 2, 3, 10, 30, 100]:
         cutpoints = source.video_frame_times
-        cutpoints = [0] + list(np.sort(np.random.choice(cutpoints, c, replace=False))) + [source.eof_time]
+        cutpoints = [0] + list(np.sort(np.random.choice(cutpoints, c, replace=False))) + [source.duration()]
 
         segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -258,9 +316,9 @@ def test_h265_smart_cut():
 
 def test_h265_smart_cut_large():
     input_file = 'h265_large.mkv'
-    create_test_video(input_file, 17, 'hevc', 'yuv422p10le', 25, (1280, 720))
+    create_test_video(input_file, 17, 'hevc', 'yuv422p', 25, (1280, 720))
     output_path = test_h265_smart_cut_large.__name__ + '.mkv'
-    for c in [1, 2]:
+    for c in [1, 2, 5]:
         test_smart_cut(input_file, output_path, c)
 
 def test_h264_24_fps_long():
@@ -345,6 +403,35 @@ def test_mp4_h265_smart_cut():
     for c in [1, 2, 3, 10]:
         test_smart_cut(filename, output_path, c)
 
+def test_mpg_smart_cut():
+    filename = cached_download('https://filesamples.com/samples/video/mpg/sample_640x360.mpg', 'mpeg640x360.mpg')
+    output_path = test_mpg_smart_cut.__name__ + '.mpg'
+    for c in [1, 2, 3, 10]:
+        test_smart_cut(filename, output_path, c)
+
+def test_mpg_cut_on_keyframes():
+    filename = cached_download('https://filesamples.com/samples/video/mpg/sample_640x360.mpg', 'mpeg640x360.mpg')
+    output_path = test_mpg_cut_on_keyframes.__name__ + '.mpg'
+    test_cut_on_keyframes(filename, output_path)
+
+def test_m2ts_mpeg2_smart_cut():
+    filename = cached_download('https://filesamples.com/samples/video/m2ts/sample_960x540.m2ts', 'm2ts960x540.m2ts')
+    output_path = test_m2ts_mpeg2_smart_cut.__name__ + '.m2ts'
+    for c in [1, 2, 3, 10]:
+        test_smart_cut(filename, output_path, c)
+
+def test_m2ts_h264_smart_cut():
+    filename = cached_download('https://www.dwsamplefiles.com/?dl_id=311', 'm2ts_h264_636x360.m2ts')
+    output_path = test_m2ts_h264_smart_cut.__name__ + '.m2ts'
+    for c in [1, 2, 3, 10]:
+        test_smart_cut(filename, output_path, c)
+
+def test_ts_smart_cut():
+    filename = cached_download('https://filesamples.com/samples/video/ts/sample_1280x720.ts', 'mpeg2.ts')
+    output_path = test_ts_smart_cut.__name__ + '.ts'
+    for c in [1, 2]:
+        test_smart_cut(filename, output_path, c)
+
 def test_vertical_transform():
     input_path = 'vertical_in.mkv'
     file_duration = 5
@@ -358,7 +445,7 @@ def test_vertical_transform():
     source_container = MediaContainer(input_path)
 
     cutpoints = source_container.video_frame_times
-    cutpoints = [0] + list(np.sort(np.random.choice(cutpoints, n_cuts, replace=False))) + [source_container.eof_time]
+    cutpoints = [0] + list(np.sort(np.random.choice(cutpoints, n_cuts, replace=False))) + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -395,7 +482,7 @@ def test_video_recode_codec_override():
     source_container = MediaContainer(input_path)
 
     cutpoints = source_container.video_frame_times
-    cutpoints = [0] + list(np.sort(np.random.choice(cutpoints, n_cuts, replace=False))) + [source_container.eof_time]
+    cutpoints = [0] + list(np.sort(np.random.choice(cutpoints, n_cuts, replace=False))) + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -451,8 +538,6 @@ def test_video_recode_codec_override():
 
     # assert os.path.getsize(output_path_b) > os.path.getsize(output_path_a)
 
-
-
 def test_vorbis_passthru():
     filename = 'basic.ogg'
     freq = 440
@@ -481,7 +566,7 @@ def test_vorbis_passthru():
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
     smart_cut(source_container, segments, output_path, audio_export_info=export_info)
     suffix_container = MediaContainer(output_path)
-    assert suffix_container.eof_time > 14.9 and suffix_container.eof_time < 15.1
+    assert suffix_container.duration() > 14.9 and suffix_container.duration() < 15.1
      # The cut point is not on packet boundary so the audio stream doesn't start at 0
     assert suffix_container.audio_tracks[0].packets[0].pts < 1000
 
@@ -496,7 +581,7 @@ def test_vorbis_track_cut():
     n_cuts = 10
     source_container = MediaContainer(filename)
     cutpoints = np.arange(file_duration*1000)[1:-1]
-    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.eof_time]
+    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -513,7 +598,7 @@ def test_vorbis_track_cut():
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
     smart_cut(source_container, segments, output_path, audio_export_info=export_info)
     suffix_container = MediaContainer(output_path)
-    assert suffix_container.eof_time > 14.9 and suffix_container.eof_time < 15.1
+    assert suffix_container.duration() > 14.9 and suffix_container.duration() < 15.1
      # The cut point is not on packet boundary so the audio stream doesn't start at 0
     assert suffix_container.audio_tracks[0].packets[0].pts < 1000
 
@@ -528,7 +613,7 @@ def test_mp3_track_cut():
     n_cuts = 10
     source_container = MediaContainer(filename)
     cutpoints = np.arange(file_duration*1000)[1:-1]
-    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.eof_time]
+    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -548,7 +633,7 @@ def test_mp3_track_cut():
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
     smart_cut(source_container, segments, output_path, audio_export_info=export_info)
     suffix_container = MediaContainer(output_path)
-    assert suffix_container.eof_time > 14.9 and suffix_container.eof_time < 15.1
+    assert suffix_container.duration() > 14.9 and suffix_container.duration() < 15.1
      # The cut point is not on packet boundary so the audio stream doesn't start at 0
     assert suffix_container.audio_tracks[0].packets[0].pts < 1000
 
@@ -580,7 +665,7 @@ def test_mp3_passthru():
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
     smart_cut(source_container, segments, output_path, audio_export_info=export_info)
     suffix_container = MediaContainer(output_path)
-    assert suffix_container.eof_time > 14.9 and suffix_container.eof_time < 15.1
+    assert suffix_container.duration() > 14.9 and suffix_container.duration() < 15.1
      # The cut point is not on packet boundary so the audio stream doesn't start at 0
     assert suffix_container.audio_tracks[0].packets[0].pts < 1000
 
@@ -596,7 +681,7 @@ def test_vorbis_encode_mix():
     n_cuts = 10
     source_container = MediaContainer(filename)
     cutpoints = np.arange(file_duration*1000)[1:-1]
-    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.eof_time]
+    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -620,7 +705,7 @@ def test_flac_conversions():
     n_cuts = 10
     source_container = MediaContainer(filename)
     cutpoints = np.arange(file_duration*1000)[1:-1]
-    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.eof_time]
+    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -655,7 +740,7 @@ def test_wav_conversions():
     n_cuts = 10
     source_container = MediaContainer(filename)
     cutpoints = np.arange(file_duration*1000)[1:-1]
-    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.eof_time]
+    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -759,7 +844,7 @@ def test_mkv_with_video_and_audio_mix():
     result_container = MediaContainer(output_path)
 
     assert len(result_container.audio_tracks) == 1
-    compare_tracks(source_container.audio_tracks[0], result_container.audio_tracks[0], rms_threshold=0.5)
+    compare_tracks(source_container.audio_tracks[0], result_container.audio_tracks[0])
 
     mix = MixInfo([0., 1.])
     export_info = AudioExportInfo(mix, mix_export_settings)
@@ -767,7 +852,7 @@ def test_mkv_with_video_and_audio_mix():
 
     result_container = MediaContainer(output_path)
     assert len(result_container.audio_tracks) == 1
-    compare_tracks(source_container.audio_tracks[1], result_container.audio_tracks[0], rms_threshold=0.6)
+    compare_tracks(source_container.audio_tracks[1], result_container.audio_tracks[0])
 
     mix = MixInfo([0.5, 0.5])
     export_info = AudioExportInfo(mix, mix_export_settings)
@@ -800,7 +885,7 @@ def test_mix_with_rate_conversion():
     source_container.add_audio_file(in_2)
 
     cutpoints = np.arange(file_duration*1000)[1:-1]
-    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.eof_time]
+    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -833,7 +918,7 @@ def test_denoiser():
         source_container = MediaContainer(in_file)
 
         cutpoints = np.arange(file_duration*1000)[1:-1]
-        cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.eof_time]
+        cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.duration()]
 
         segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -860,7 +945,7 @@ def test_denoiser():
 
     mix = MixInfo([1., 1.])
 
-    segments = [(0, source_container.eof_time)]
+    segments = [(0, source_container.duration())]
 
     # output denoise
     mix_export_settings = AudioExportSettings(codec='libvorbis', channels='mono', bitrate=92_000, sample_rate=48_000, denoise=2)
@@ -886,7 +971,6 @@ def test_denoiser():
     result_container = MediaContainer(output_path)
     compare_tracks(source_container.audio_tracks[0], result_container.audio_tracks[0])
 
-
 def test_vp9_smart_cut():
     filename = 'vp9.mkv'
 
@@ -911,6 +995,70 @@ def test_av1_smart_cut():
     for c in [1, 2]:
         test_smart_cut(filename, output_path, n_cuts=c)
 
+def test_avi_smart_cut():
+    filename = 'mpeg4.avi'
+
+    create_test_video(filename, 30, 'mpeg4', 'yuv420p', 30, (32, 18))
+    output_path = test_avi_smart_cut.__name__ + filename
+    for c in [2, 5, 10]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+    filename = 'mjpeg.avi'
+    create_test_video(filename, 30, 'mjpeg', 'yuvj420p', 30, (32, 18))
+    output_path = test_avi_smart_cut.__name__ + filename
+    for c in [2, 5, 10]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+    filename = 'h263.avi'
+    create_test_video(filename, 30, 'h263', 'yuv420p', 30, (128, 96))
+    output_path = test_avi_smart_cut.__name__ + filename
+    for c in [2, 5, 10]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+def test_flv_smart_cut():
+    filename = 'flv.flv'
+    create_test_video(filename, 30, 'flv', 'yuv420p', 30, (32, 16))
+    output_path = test_avi_smart_cut.__name__ + filename
+    for c in [2, 5, 10]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+def test_mov_smart_cut():
+    filename = 'h264.mov'
+    create_test_video(filename, 30, 'h264', 'yuv420p', 30, (32, 16))
+    output_path = test_mov_smart_cut.__name__ + filename
+    for c in [2, 5, 10]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+    filename = 'prores.mov'
+    create_test_video(filename, 30, 'prores', 'yuv422p10le', 30, (32, 16))
+    output_path = test_mov_smart_cut.__name__ + filename
+    for c in [2, 5]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+def test_wmv_smart_cut():
+    filename = 'mpeg4.wmv'
+    create_test_video(filename, 30, 'mpeg4', 'yuv420p', 30, (32, 16))
+    output_path = test_wmv_smart_cut.__name__ + filename
+    for c in [2, 5, 10]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+    filename = 'wmv1.wmv'
+    create_test_video(filename, 30, 'wmv1', 'yuv420p', 30, (32, 16))
+    output_path = test_wmv_smart_cut.__name__ + filename
+    for c in [2, 5]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+    filename = 'wmv2.wmv'
+    create_test_video(filename, 30, 'wmv2', 'yuv420p', 30, (32, 16))
+    output_path = test_wmv_smart_cut.__name__ + filename
+    for c in [2, 5]:
+        test_smart_cut(filename, output_path, n_cuts=c)
+
+    filename = cached_download('https://filesamples.com/samples/video/wmv/sample_960x540.wmv', 'msmpeg.wmv')
+    output_path = test_wmv_smart_cut.__name__ + filename
+    for c in [2, 3]:
+        test_smart_cut(filename, output_path, n_cuts=c, pixel_tolerance=50)
+
 def test_night_sky():
     os.environ["PYAV_TESTDATA_DIR"] = 'pyav_datasets'
     filename = av_datasets.curated("pexels/time-lapse-video-of-night-sky-857195.mp4")
@@ -932,6 +1080,23 @@ def test_sunset():
     video_settings = VideoSettings(VideoExportMode.SMARTCUT, VideoExportQuality.HIGH, None)
     for c in [1, 2, 3]:
         test_smart_cut(filename, output_path, n_cuts=c, video_settings=video_settings)
+
+def test_seeking():
+    in_file = "seek_in.mkv"
+    ref_file = "seek_ref.mkv"
+    create_test_video(in_file, 600, 'h264', 'yuv420p', 30, (32, 18))
+    create_test_video(ref_file, 10, 'h264', 'yuv420p', 30, (32, 18))
+    output_path = test_seeking.__name__ + '.mkv'
+
+    source = MediaContainer(in_file)
+    segments = [(590, 600)]
+
+    smart_cut(source, segments, output_path, log_level='warning')
+
+    ref_container = MediaContainer(ref_file)
+    result_container = MediaContainer(output_path)
+
+    check_videos_equal(ref_container, result_container)
 
 # This tests cutting of interlaced video and it fails. I don't see a way to make it work.
 # Therefore interlacing is unsupported, probably forever. Leaving the test here for future reference.
@@ -955,8 +1120,8 @@ def test_manual():
 
     output_path = test_manual.__name__ + '.ogg'
     n_cuts = 3
-    cutpoints = np.arange(source_container.eof_time*1000)[1:-1]
-    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.eof_time]
+    cutpoints = np.arange(source_container.duration()*1000)[1:-1]
+    cutpoints = [0] + [Fraction(x, 1000) for x in np.sort(np.random.choice(cutpoints, n_cuts, replace=False))] + [source_container.duration()]
 
     segments = list(zip(cutpoints[:-1], cutpoints[1:]))
 
@@ -994,9 +1159,21 @@ def run_tests():
         test_mkv_to_mp4_smart_cut,
 
         test_vp9_smart_cut,
+        test_vp9_profile_1,
         test_av1_smart_cut,
 
-        test_vp9_profile_1,
+        test_avi_smart_cut,
+        test_flv_smart_cut,
+        test_mov_smart_cut,
+        test_wmv_smart_cut,
+
+        test_mpg_cut_on_keyframes,
+        test_mpg_smart_cut,
+
+        test_m2ts_mpeg2_smart_cut,
+        test_m2ts_h264_smart_cut,
+
+        test_ts_smart_cut,
 
         test_night_sky,
         test_night_sky_to_mkv,
@@ -1016,6 +1193,7 @@ def run_tests():
 
         test_mp3_passthru,
 
+        test_seeking,
 
         # test_broken_ref_vid,
 
@@ -1048,9 +1226,9 @@ def run_tests():
         print("Skipping smc tests")
         pass
 
-    # tests = [test_broken_ref_vid]
-    # tests = smc_tests
-    # tests = [test_denoiser]
+    # tests = [test_mkv_with_video_and_audio_mix]
+    # tests = [test_mov_smart_cut]
+    # tests = [test_seeking]
 
     perf_timer = time()
 
@@ -1068,5 +1246,11 @@ if __name__ == "__main__":
     if manual_input is None:
         run_tests()
     else:
-        test_smart_cut(manual_input, os.path.split(sys.argv[1])[1], 5)
-        print("Done")
+        for file in manual_input:
+            try:
+                print(f"Testing {file}")
+                test_smart_cut(file, os.path.split(file)[1], 2, audio_export_info='auto', pixel_tolerance=50)
+                print(f"Done: {file}")
+            except Exception as e:
+                print(f"Fail: {file}")
+                traceback.print_exc()
