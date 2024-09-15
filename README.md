@@ -148,3 +148,14 @@ Tests ran in 153.6s
 * [mp3DirectCut](https://mpesch3.de/) is a proprietary audio lossless cutting tool. This one supports mp3 and aac.
 * [Avidemux](https://avidemux.sourceforge.net/) used to have a mode called [SmartCopy](https://www.avidemux.org/admWiki/doku.php?id=using:cutting#intra_frames_and_smartcopy) but according to [this forum post](https://avidemux.org/smif/index.php?topic=16372.0) it was removed in avidemux 2.6 and current version only supports cutting on keyframes (at least I think so).
 * [Machete](https://www.machetesoft.com/) Quick and light lossless video cutting tool. Not free, but has a 14-day trial version.
+
+## Version History
+
+### 1.1
+* Cut subtitle tracks
+* Add support for MPEG-2 cutting and more container formats (.flv, .mov, .wmv, .avi)
+* Add timecode format hh:mm:ss to the command line interface
+
+### 1.0
+* Initial opensource release
+* Frame accurate smart cutting of most modern video codecs (h264, h265, vp9, av1)
