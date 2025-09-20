@@ -479,11 +479,11 @@ class VideoCutter:
 
             out_tb = self.out_time_base if self.codec_name != 'mpeg2video' else self.enc_codec.time_base
 
-            frame.pts -= s.start_time / in_tb
+            frame.pts -= int(s.start_time / in_tb)
 
-            frame.pts = frame.pts * in_tb / out_tb
+            frame.pts = int(frame.pts * in_tb / out_tb)
             frame.time_base = out_tb
-            frame.pts += self.segment_start_in_output / out_tb
+            frame.pts += int(self.segment_start_in_output / out_tb)
 
             if frame.pts <= self.enc_last_pts:
                 frame.pts = self.enc_last_pts + 1
@@ -529,12 +529,12 @@ class VideoCutter:
 
             # Apply timing adjustments
             packet.pts -= segment_start_pts
-            packet.pts = packet.pts * self.in_stream.time_base / self.out_time_base
-            packet.pts += self.segment_start_in_output / self.out_time_base
+            packet.pts = int(packet.pts * self.in_stream.time_base / self.out_time_base)
+            packet.pts += int(self.segment_start_in_output / self.out_time_base)
             if packet.dts is not None:
                 packet.dts -= segment_start_pts
-                packet.dts = packet.dts * self.in_stream.time_base / self.out_time_base
-                packet.dts += self.segment_start_in_output / self.out_time_base
+                packet.dts = int(packet.dts * self.in_stream.time_base / self.out_time_base)
+                packet.dts += int(self.segment_start_in_output / self.out_time_base)
 
             result_packets.extend(self.remux_bitstream_filter.filter(packet))
 

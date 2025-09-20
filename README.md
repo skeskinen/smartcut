@@ -53,6 +53,8 @@ python -m venv .venv
 source .venv/bin/activate
 # Install the required dependencies:
 pip install -r requirements.txt
+# Setup environment variable
+export PYTHONPATH=$PYTHONPATH:$(pwd)
 # Run:
 python ./smartcut input.mp4 output.mp4 --keep 10,20,40,50
 ```
